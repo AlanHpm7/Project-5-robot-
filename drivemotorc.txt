@@ -1,0 +1,282 @@
+//Copied from Winter23 labs 
+ 
+ 
+// Drive Motor Module Source File 
+ 
+#include "DriveMotor.h" 
+#include "Utility.h" 
+#include "stm32f303xe.h" 
+ 
+// Drive Motor Configuration Parameters 
+// - Motor Speed Control Pins: 
+//    Left Motor	PC10 
+//    Right Motor   PC11 
+// - Motor Direction Control Pins: 
+//    Left Motor Forward (A)	PC12 
+//    Left Motor Reverse (B)    PC13 
+//    Right Motor Forward (A)   PC8 
+//    Right Motor Reverse (B)   PC9 
+// 
+// - Direction Control Truth Table 
+//     STOP   FWD	RWD   UNDEFINED 
+// (A)  0      1     0      1      
+// (B)  0      0     1      1 
+ 
+void DriveMotor_Init(void) 
+{ 
+	// Enable GPIO Clock 
+	SET_BITS	(RCC->AHBENR, RCC_AHBENR_GPIOCEN); 
+ 
+	CLEAR_BITS	(GPIOC->MODER, 0x03UL << (2*12)); 
+	SET_BITS(GPIOC->MODER, 0x1UL << (2*12)); 
+	CLEAR_BITS	(GPIOC->MODER, 0x03UL << (2*13)); 
+	SET_BITS(GPIOC->MODER, 0x1UL << (2*13)); 
+	CLEAR_BITS	(GPIOC->MODER, 0x03UL << (2*8)); 
+	SET_BITS(GPIOC->MODER, 0x1UL << (2*8));	 
+		CLEAR_BITS	(GPIOC->MODER, 0x03UL << (2*9)); 
+	SET_BITS(GPIOC->MODER, 0x1UL << (2*9)); 
+	//    MODE = Output 
+	//    Output Type = Push Pull 
+	CLEAR_BITS(GPIOC->OTYPER, (0x1UL << 12)); 
+	CLEAR_BITS(GPIOC->OTYPER, (0x1UL << 13)); 
+	CLEAR_BITS(GPIOC->OTYPER, (0x1UL << 8)); 
+	CLEAR_BITS(GPIOC->OTYPER, (0x1UL << 9)); 
+	//    Pull-up / Pull-down = No Pull 
+	CLEAR_BITS(GPIOC->PUPDR, (0x3UL << (2*12))); 
+	CLEAR_BITS(GPIOC->PUPDR, (0x3UL << (2*13))); 
+	CLEAR_BITS(GPIOC->PUPDR, (0x3UL << (2*8))); 
+	CLEAR_BITS(GPIOC->PUPDR, (0x3UL << (2*9))); 
+	//    Initial Output Value should be set to 0 (STOP by default) 
+	 
+	//  For Speed Control, connect TIM8 channels to PC10 and PC11 with the following configurations 
+	CLEAR_BITS	(GPIOC->MODER, 0x03UL << (2*10)); 
+	SET_BITS(GPIOC->MODER, 0x3UL << (2*10)); 
+	CLEAR_BITS	(GPIOC->MODER, 0x03UL << (2*11)); 
+	SET_BITS(GPIOC->MODER, 0x3UL << (2*11)); 
+	//	  MODE = Alternative Function 4 
+	SET_BITS (GPIOC->AFR[0], 0x03UL << (4*10)); 
+	SET_BITS (GPIOC->AFR[0], 0x03UL << (4*11)); 
+	//    Output Type = Push Pull 
+	CLEAR_BITS(GPIOC->OTYPER, (0x1UL << 10)); 
+	CLEAR_BITS(GPIOC->OTYPER, (0x1UL << 11)); 
+	 
+	//    Pull-up / Pull-down = No Pull 
+	CLEAR_BITS(GPIOC->PUPDR, (0x3UL << (2*10))); 
+	CLEAR_BITS(GPIOC->PUPDR, (0x3UL << (2*11))); 
+	//  PC10 will be connected to TIM8 channel 1N (complemented output) 
+	//  PC11 will be connected to TIM8 channel 2N (complemented output) 
+	 
+	 
+	 
+	// Next, Configure Timer 8 for CH1N and CH2N - Mostly like Servo with 2 exceptions  
+	// 1. Turn o Timer 8 
+	SET_BITS (RCC->APB2ENR, RCC_APB2ENR_TIM8EN); 
+	 
+	// 2. Program Timer 8 prescaler to count in microseconds 
+	TIM8->PSC = 36; 
+		//You need -1 to allow the timer start sequence (mandatory) 
+		 
+	// 3. Set TIM8 to upcounting mode (MANDATORY!! because TIM8 default mode can be something else) 
+		// [DIFFERENT!] This is different from TIM15 in Servo Lab because TIM15 only supports upcounting 
+	TIM8->CR1 &= ~(TIM_CR1_DIR | TIM_CR1_CMS); 
+	// 4. Set the TIM8 reload value to 1000 us period (Remember -1 because it's repeating) 
+			TIM8->ARR = 1000; 
+	// 5. Enable TIM8 ARR preload 
+		SET_BITS (TIM8->CR1, TIM_CR1_ARPE); 
+	// 6. Set TIM8 main output enabled 
+	SET_BITS (TIM8->BDTR, TIM_BDTR_MOE); 
+	 
+		 
+	 
+	// Configure CH1N (Complementary) of TIM8 for Left Wheel PWM output compare mode 
+	 
+	// 1. Select PWM mode 1 for TIM8 channel 1N 
+	TIM8->CCMR1 |= TIM_CCMR1_OC1M_1 | TIM_CCMR1_OC1M_2; 
+		// Set OC1M bits to 0110 (i.e. set bit 1 and 2) in CCMR1 
+		// Read manual again to confirm 
+	 
+	// 2. Enable output compare preload on channel 1 (i.e. update counter register only on timer enabled (UE) ) 
+	    // Set OC1PE bit in CCMR1 
+	SET_BITS (TIM8->CCMR1, TIM_CCMR1_OC1PE); 
+	// 3. Enable the COMPLEMENTARY output channel (CH1N) 
+		// Set CC1NE bit in CCER 
+		  
+			SET_BITS (TIM8->CCER , TIM_CCER_CC1NE); 
+		// [DIFFERENT!] This is defferent because PC10 and PC11 only has AF options of TIM8 CH1N/CH2N 
+		// Read Manual to confirm 
+		 
+	 
+	// 4. Make CH1N active HI (standard polarity) 
+		// Clear CC1NP bit in CCER 
+		 TIM8->CCER &= ~TIM_CCER_CC1NP; 
+		// [DIFFERENT!] Also because we are working with completentary output 
+	 
+	// 5. Set the CH1N initial PWM ON-time to 0 by clearing CCR1, so that PWM will not be outputted until the first 1ms elapsed 
+		TIM8->CCR1 = 0; 
+	 
+	 
+	 
+	// Configure CH2N (Complementary) of TIM8 for Right Wheel PWM output compare mode 
+	 
+	// 1. Select PWM mode 1 for TIM8 channel 2N 
+		// Set OC2M to 0110 in CCMR1 - same as CH1N configurations 
+		TIM8->CCMR1 |= TIM_CCMR1_OC2M_1 | TIM_CCMR1_OC2M_2; 
+		// Read Manual to confirm 
+	 
+	// 2. Enable output compare preload on channel 2 (i.e. update counter register only on timer enabled (UE) ) 
+		// Set OC2PE to 1 in CCMR1 - same as CH1N configurations 
+		SET_BITS (TIM8->CCMR1, TIM_CCMR1_OC2PE); 
+	// 3. Enable the COMPLEMENTARY output channel (CH2N) 
+		// Set CC2NE in CCER - same as CH1N 
+		SET_BITS (TIM8->CCER, TIM_CCER_CC2NE); 
+	// 4. Make CH2N active HI (standard polarity) 
+		// Clear CC2NP in CCER - same as CH1N 
+		TIM8->CCER &= ~TIM_CCER_CC2NP; 
+	// 5. Set the CH2N initial PWM ON-time to 0 by clearing CCR1, so that PWM will not be outputted until the first 1ms elapsed 
+		TIM8->CCR2 = 0; 
+ 
+	 
+	// Finally, Start TIM8 CH1N and CH2N Outputs 
+				 
+	// 1. Force an update event to preload all the registers 
+		// Set UG to 1 in TIM8 EGR 
+		TIM8->EGR |= TIM_EGR_UG; 
+	// 2. Enable TIM15 to start counting 
+		// Set CEN in TIM8 CR1 
+		SET_BITS( TIM8->CR1, TIM_CR1_CEN ); 
+	 
+} 
+ 
+ 
+void SetMotorSpeed( uint8_t motor, uint16_t dutyCycle ) 
+{ 
+	// This part is the same as Servo 
+	//		Write different values into CCR1/CCR2 to control the motor speed using dutyCycle 
+	//      Make sure you cap the DutyCycle to 100% / 0% so to not cause odd system behaviours 
+	if (motor == 1) 
+	{ 
+		TIM8->CCR1 = dutyCycle; 
+	} 
+	 
+	if (motor == 2) 
+	{ 
+		TIM8->CCR2 = dutyCycle; 
+	} 
+	 
+}	 
+ 
+void MotorsForward(void){ 
+	GPIO_ODR_SET( C, 8, GPIO_ODR_BIT_SET );//Reverse right motor 
+	SetMotorSpeed(1, 90); 
+	GPIO_ODR_SET( C, 9, GPIO_ODR_BIT_SET );//Forward on left 
+	SetMotorSpeed(2, 90); 
+} 
+void MotorsBackward(void){ 
+	GPIO_ODR_SET( C, 8, GPIO_ODR_BIT_CLEAR );//Reverse right motor 
+	SetMotorSpeed(1, 90); 
+	GPIO_ODR_SET( C, 9, GPIO_ODR_BIT_CLEAR );//Back on left 
+	SetMotorSpeed(2, 90); 
+} 
+void HalfRight(void){ 
+	GPIO_ODR_SET( C, 8, GPIO_ODR_BIT_SET );//Reverse right motor 
+	SetMotorSpeed(1, 40); 
+	GPIO_ODR_SET( C, 9, GPIO_ODR_BIT_SET );//Forward on left 
+	SetMotorSpeed(2, 90); 
+} 
+void HalfLeft(void){ 
+	GPIO_ODR_SET( C, 8, GPIO_ODR_BIT_SET );//Reverse right motor 
+	SetMotorSpeed(1, 90); 
+	GPIO_ODR_SET( C, 9, GPIO_ODR_BIT_SET );//Forward on left 
+	SetMotorSpeed(2, 40); 
+} 
+void RevRight(void){ 
+	GPIO_ODR_SET( C, 8, GPIO_ODR_BIT_CLEAR );//Reverse right motor 
+	SetMotorSpeed(1, 40); 
+	GPIO_ODR_SET( C, 9, GPIO_ODR_BIT_CLEAR );//Back on left 
+	SetMotorSpeed(2, 90); 
+} 
+void RevLeft(void){ 
+	GPIO_ODR_SET( C, 8, GPIO_ODR_BIT_CLEAR );//rev right motor 
+	SetMotorSpeed(1, 90); 
+	GPIO_ODR_SET( C, 9, GPIO_ODR_BIT_CLEAR );//rev on left 
+	SetMotorSpeed(2, 40); 
+} 
+void FullRight(void){ 
+	GPIO_ODR_SET( C, 8, GPIO_ODR_BIT_SET );//Reverse right motor 
+	SetMotorSpeed(1, 90); 
+	GPIO_ODR_SET( C, 9, GPIO_ODR_BIT_CLEAR );//Forward on left 
+	SetMotorSpeed(2, 90); 
+} 
+void FullLeft(void){ 
+	GPIO_ODR_SET( C, 8, GPIO_ODR_BIT_CLEAR );//Reverse right motor 
+	SetMotorSpeed(1, 90); 
+	GPIO_ODR_SET( C, 9, GPIO_ODR_BIT_SET );//Forward on left 
+	SetMotorSpeed(2, 90); 
+} 
+ 
+ 
+void SetMotorDir( char dir ) 
+{ 
+	char Setting; 
+	 
+	 if(dir != '\0'){ 
+		  Setting = dir; 
+		 } 
+ 
+	  switch (Setting){ 
+			case '1':			//makes it go forward 
+		GPIO_ODR_SET( C, 12, GPIO_ODR_BIT_SET );	//set the left motor to go forward 
+ 
+		HAL_Delay(100); 
+		GPIO_ODR_SET( C, 13, GPIO_ODR_BIT_CLEAR );//set the left motor to go forwards 
+		GPIO_ODR_SET( C, 8, GPIO_ODR_BIT_SET );		//sets the right motor to go forward 
+		 
+		HAL_Delay(100); 
+		GPIO_ODR_SET( C, 9, GPIO_ODR_BIT_CLEAR );	//sets the right motor to go forward 
+		 
+			break; 
+		case '2': 
+			GPIO_ODR_SET( C, 13, GPIO_ODR_BIT_SET ); //set the left motor to go backwards 
+			 
+		HAL_Delay(100); 
+		GPIO_ODR_SET( C, 12, GPIO_ODR_BIT_CLEAR );//set the left motor to go backwards 
+		GPIO_ODR_SET( C, 9, GPIO_ODR_BIT_SET );		//set the right motor to go backwards 
+			 
+		HAL_Delay(100); 
+		GPIO_ODR_SET( C, 8, GPIO_ODR_BIT_CLEAR );	//set the right motor to go backwards 
+			break; 
+		case '3': 
+			GPIO_ODR_SET( C, 13, GPIO_ODR_BIT_CLEAR );//set the left motor to stop 
+			 
+		HAL_Delay(100); 
+		GPIO_ODR_SET( C, 12, GPIO_ODR_BIT_CLEAR );	//set the left motor to stop 
+		GPIO_ODR_SET( C, 9, GPIO_ODR_BIT_CLEAR );		//set the right motor to stop 
+			 
+		HAL_Delay(100); 
+		GPIO_ODR_SET( C, 8, GPIO_ODR_BIT_CLEAR ); 	//set the right motor to stop 
+			break; 
+		case '4': 
+			GPIO_ODR_SET( C, 13, GPIO_ODR_BIT_SET );//set the left motor to go backwards 
+		 
+			HAL_Delay(100); 
+		GPIO_ODR_SET( C, 12, GPIO_ODR_BIT_CLEAR );//set the left motor to go backwards 
+		GPIO_ODR_SET( C, 8, GPIO_ODR_BIT_SET );		//sets the right motor to go forward 
+			 
+		HAL_Delay(100); 
+		GPIO_ODR_SET( C, 9, GPIO_ODR_BIT_CLEAR );	//sets the right motor to go forward 
+			break; 
+		case '5': 
+			GPIO_ODR_SET( C, 12, GPIO_ODR_BIT_SET );//set the left motor to go forwards 
+			 
+		HAL_Delay(100); 
+		GPIO_ODR_SET( C, 13, GPIO_ODR_BIT_CLEAR );//set the left motor to go forwards 
+		GPIO_ODR_SET( C, 9, GPIO_ODR_BIT_SET );		//set the right motor to go backwards 
+			 
+		HAL_Delay(100); 
+		GPIO_ODR_SET( C, 8, GPIO_ODR_BIT_CLEAR );	//set the right motor to go backwards 
+			break; 
+	  } 
+	 
+} 
+ 
+ 
