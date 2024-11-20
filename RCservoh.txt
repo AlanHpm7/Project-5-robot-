@@ -1,0 +1,16 @@
+/******************************************************************************
+ * Name: RCservo.h (interface)
+ * Author: Alan Hosseinpour
+ * Date: February 10, 2024
+ * Description: RC servo motor control for mobile robot.
+ ******************************************************************************/
+
+#include "stm32f303xe.h"
+
+#ifndef __SERVO_H
+#define __SERVO_H
+
+void RCServo_Init(void);
+int16_t RCServo_SetAngle(int16_t angle);
+
+#endif

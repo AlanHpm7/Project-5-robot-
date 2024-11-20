@@ -1,0 +1,193 @@
+/********************************************************************************
+ * Name: DCMotor.c (implementation)
+ * Author: Alan Hosseinpour
+ * Date: March 24, 2024
+ * Description: DC motor functions.
+ ********************************************************************************/
+
+#include "DCMotor.h"
+#include "Utility.h"
+#include "stm32f303xe.h"
+
+// Drive Motor Configuration Parameters
+// - Motor Speed Control Pins:
+//   Left Motor PC10
+//   Right Motor PC11
+// - Motor Direction Control Pins:
+//   Left Motor Forward (A) PC12
+//   Left Motor Reverse (B) PC13
+//   Right Motor Forward (A) PC8
+//   Right Motor Reverse (B) PC9
+//
+// - Direction Control Truth Table
+//   STOP   FWD   RWD   UNDEFINED
+//   (A)     0     1     0     1
+//   (B)     0     0     1     1
+
+/*************************************************************
+ * DCMotor_Init() - Initiate and configure DC motors.
+ * No inputs.
+ * No return value.
+ *************************************************************/
+void DCMotor_Init(void) {
+    ENABLE_GPIO_CLOCK(C); // Enable GPIO Clock
+
+    // Configure Pins
+    // Mode = Output
+    GPIO_MODER_SET(C, 8, GPIO_MODE_OUT);
+    GPIO_MODER_SET(C, 9, GPIO_MODE_OUT);
+    GPIO_MODER_SET(C, 12, GPIO_MODE_OUT);
+    GPIO_MODER_SET(C, 13, GPIO_MODE_OUT);
+
+    // Output Type = Push Pull
+    GPIO_OTYPER_SET(C, 8, GPIO_OTYPE_PP);
+    GPIO_OTYPER_SET(C, 9, GPIO_OTYPE_PP);
+    GPIO_OTYPER_SET(C, 12, GPIO_OTYPE_PP);
+    GPIO_OTYPER_SET(C, 13, GPIO_OTYPE_PP);
+
+    // Pull-up / Pull-down = No Pull
+    GPIO_PUPDR_SET(C, 8, GPIO_PUPD_NO);
+    GPIO_PUPDR_SET(C, 9, GPIO_PUPD_NO);
+    GPIO_PUPDR_SET(C, 12, GPIO_PUPD_NO);
+    GPIO_PUPDR_SET(C, 13, GPIO_PUPD_NO);
+
+    // Initial Output Value should be set to 0 (STOP by default)
+    CLEAR_BITS(GPIOC->ODR, GPIO_ODR_8);
+    CLEAR_BITS(GPIOC->ODR, GPIO_ODR_9);
+    CLEAR_BITS(GPIOC->ODR, GPIO_ODR_12);
+    CLEAR_BITS(GPIOC->ODR, GPIO_ODR_13);
+
+    // Speed Control
+    // Mode = Alternative Function 4
+    GPIO_MODER_SET(C, 10, GPIO_MODE_AF);
+    GPIO_MODER_SET(C, 11, GPIO_MODE_AF);
+    GPIO_AFR_SET(C, 10, 4);
+    GPIO_AFR_SET(C, 11, 4);
+
+    // Output Type = Push Pull
+    GPIO_OTYPER_SET(C, 10, GPIO_OTYPE_PP);
+    GPIO_OTYPER_SET(C, 11, GPIO_OTYPE_PP);
+
+    // Pull-up / Pull-down = No Pull
+    GPIO_PUPDR_SET(C, 10, GPIO_PUPD_NO);
+    GPIO_PUPDR_SET(C, 11, GPIO_PUPD_NO);
+
+    // Configure TIM8 for CH1N and CH2N
+    SET_BITS(RCC->APB2ENR, RCC_APB2ENR_TIM8EN); // Turn on Timer 8
+    SET_BITS(TIM8->PSC, 71UL); // Set PSC so it counts in 1us
+    CLEAR_BITS(TIM8->CR1, TIM_CR1_DIR); // Set TIM8 counting direction to upcounting
+    FORCE_BITS(TIM8->ARR, 0xFFFFUL, 999UL); // Set ARR to 999us
+    SET_BITS(TIM8->CR1, TIM_CR1_ARPE); // Enable ARR preload
+    SET_BITS(TIM8->BDTR, TIM_BDTR_MOE); // Set main output enabled (MOE)
+
+    // Configure CH1N of TIM8 for Left Wheel PWM output compare mode
+    FORCE_BITS(TIM8->CCMR1, TIM_CCMR1_OC1M_Msk, 0x6UL << TIM_CCMR1_OC1M_Pos); // Set TIM8 to PWM mode
+    SET_BITS(TIM8->CCMR1, TIM_CCMR1_OC1PE); // Enable output compare preload on channel 1
+    SET_BITS(TIM8->CCER, TIM_CCER_CC1NE); // Enable the COMPLEMENTARY output channel (CH1N)
+    CLEAR_BITS(TIM8->CCER, TIM_CCER_CC1NP); // Make CH1N active HI
+    CLEAR_BITS(TIM8->CCR1, TIM_CCR1_CCR1); // Set the CH1N initial PWM ON-time to 0us
+
+    // Configure CH2N of TIM8 for Right Wheel PWM output compare mode
+    FORCE_BITS(TIM8->CCMR1, TIM_CCMR1_OC2M_Msk, 0x6UL << TIM_CCMR1_OC2M_Pos); // Set TIM8 to PWM mode
+    SET_BITS(TIM8->CCMR1, TIM_CCMR1_OC2PE); // Enable output compare preload on channel 2
+    SET_BITS(TIM8->CCER, TIM_CCER_CC2NE); // Enable the COMPLEMENTARY output channel (CH2N)
+    CLEAR_BITS(TIM8->CCER, TIM_CCER_CC2NP); // Make CH2N active HI
+    CLEAR_BITS(TIM8->CCR2, TIM_CCR2_CCR2); // Set the CH2N initial PWM ON-time to 0us
+
+    // Start TIM8 CH1N and CH2N Outputs
+    SET_BITS(TIM8->EGR, TIM_EGR_UG); // Force an update event to preload all the registers
+    SET_BITS(TIM8->CR1, TIM_CR1_CEN); // Enable TIM8 to start counting
+}
+
+/*************************************************************
+ * DCMotor_SetSpeed() - Sets the speed for a DC motor.
+ * motor - The motor to set the speed for.
+ * dutyCycle - The desired % of duty cycle for ON-time.
+ * No return value.
+ *************************************************************/
+void DCMotor_SetSpeed(uint8_t motor, uint16_t dutyCycle) {
+    if (dutyCycle > 100) {
+        dutyCycle = 100;
+    } else if (dutyCycle < 50) {
+        dutyCycle = 50; // Motors do not start spinning if the duty cycle is < 50%
+    }
+
+    dutyCycle *= 10; // Convert to ms ON-time
+
+    if (motor == DCMOTOR_LEFT) {
+        FORCE_BITS(TIM8->CCR1, 0xFFFFUL, dutyCycle);
+    } else if (motor == DCMOTOR_RIGHT) {
+        FORCE_BITS(TIM8->CCR2, 0xFFFFUL, dutyCycle);
+    }
+}
+
+/*************************************************************
+ * DCMotor_SetDir() - Sets the direction of a DC motor.
+ * motor - The motor to set the direction of.
+ * dir - The direction the DC motor should spin.
+ * No return value.
+ *************************************************************/
+void DCMotor_SetDir(uint8_t motor, uint8_t dir) {
+    if (motor == DCMOTOR_LEFT) {
+        CLEAR_BITS(GPIOC->ODR, GPIO_ODR_12);
+        CLEAR_BITS(GPIOC->ODR, GPIO_ODR_13);
+        Delay_ms(5);
+
+        if (dir == DCMOTOR_FWD) {
+            SET_BITS(GPIOC->ODR, GPIO_ODR_12);
+            CLEAR_BITS(GPIOC->ODR, GPIO_ODR_13);
+        } else if (dir == DCMOTOR_BWD) {
+            CLEAR_BITS(GPIOC->ODR, GPIO_ODR_12);
+            SET_BITS(GPIOC->ODR, GPIO_ODR_13);
+        }
+    } else if (motor == DCMOTOR_RIGHT) {
+        CLEAR_BITS(GPIOC->ODR, GPIO_ODR_8);
+        CLEAR_BITS(GPIOC->ODR, GPIO_ODR_9);
+        Delay_ms(5);
+
+        if (dir == DCMOTOR_FWD) {
+            SET_BITS(GPIOC->ODR, GPIO_ODR_8);
+            CLEAR_BITS(GPIOC->ODR, GPIO_ODR_9);
+        } else if (dir == DCMOTOR_BWD) {
+            CLEAR_BITS(GPIOC->ODR, GPIO_ODR_8);
+            SET_BITS(GPIOC->ODR, GPIO_ODR_9);
+        }
+    }
+}
+
+/*******************************************************************
+ * DCMotor_SetMotor() - Set the speed and direction of one motor.
+ * dir - motor direction.
+ * dutyCycle - motor duty cycle.
+ * No return value.
+ *******************************************************************/
+void DCMotor_SetMotor(uint8_t motor, uint8_t dir, uint16_t dutyCycle) {
+    DCMotor_SetDir(motor, dir);
+    DCMotor_SetSpeed(motor, dutyCycle);
+}
+
+/*******************************************************************
+ * DCMotor_SetMotors() - Sets the speed and direction of both motors.
+ * leftDir - Left motor direction.
+ * leftDutyCycle - Left motor duty cycle.
+ * rightDir - Right motor direction.
+ * rightDutyCycle - Right motor duty cycle.
+ * No return value.
+ *******************************************************************/
+void DCMotor_SetMotors(uint8_t leftDir, uint16_t leftDutyCycle, uint8_t rightDir, uint16_t rightDutyCycle) {
+    DCMotor_SetMotor(DCMOTOR_LEFT, leftDir, leftDutyCycle);
+    DCMotor_SetMotor(DCMOTOR_RIGHT, rightDir, rightDutyCycle);
+}
+
+/*******************************************************************
+ * DCMotor_StopMotors() - Stops all motors.
+ * No inputs.
+ * No return value.
+ *******************************************************************/
+void DCMotor_StopMotors(void) {
+    DCMotor_SetDir(DCMOTOR_LEFT, DCMOTOR_STOP);
+    DCMotor_SetSpeed(DCMOTOR_LEFT, 0);
+
+    DCMotor_SetDir(DCMOTOR_RIGHT, DCMOTOR_STOP);
+    DCMotor_SetSpeed(DCMOTOR_RIGHT, 0);
+}

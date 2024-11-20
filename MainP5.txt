@@ -1,0 +1,158 @@
+/*******************************************************************************
+ * Name: main.c (client)
+ * Author: Alan Hosseinpour
+ * Date: November 14, 2024
+ * Description: Robot control with keyboard inputs for DC motor, stepper, and servo.
+ ******************************************************************************/
+
+#include "SysClock.h"
+#include "Utility.h"
+#include "UART.h"
+#include "Stepper.h"
+#include "RCServo.h"
+#include "LED.h"
+#include "PushButton.h"
+#include "KeyPad.h"
+#include "Ultrasonic.h"
+#include "DCMotor.h"
+#include "LCD.h"
+#include "Encoder.h"
+
+int main(void) {
+    // INITIALIZE
+    uint8_t pressedKey = '\0';  // Key pressed by user
+    int8_t RCServoAngle = 0;  // Servo angle
+    uint8_t StepperMode = 0;  // Stepper mode (continuous or single output)
+    uint8_t StepperLastStep = 0;  // The last step the servo took
+
+    System_Clock_Init();  // Scale clock speed to 72MHz
+    SystemCoreClockUpdate();
+
+    UART2_Init();
+    Stepper_Init();
+    RCServo_Init();
+    LED_Init();
+    KeyPad_Init();
+    Ultra_Init();  // Ultrasonic initialization is not used here but kept for completeness
+    DCMotor_Init();
+    LCD_Init();
+    Encoder_Init();  // Encoder initialization, not needed for manual control but kept for completeness
+
+    // Print initial message
+    UART_printf("Robot Control System\n");
+    UART_printf("Use keyboard keys for control\n");
+
+    // PROGRAM LOOP
+    while (1) {
+        pressedKey = KeyPad_GetKey();  // Get the pressed key from the keypad (keyboard input)
+
+        switch (pressedKey) {
+            // ** DC Motor Controls **
+            // Move DC Motors forward (robot moves forward)
+            case 'A': {
+                LCD_Clear();
+                LCD_HomeCursor();
+                LCD_printf("DC Motors: Forward");
+                DCMotor_Forward(100);  // Move forward at 100% speed
+                break;
+            }
+            // Stop DC Motors (robot stops)
+            case 'B': {
+                LCD_Clear();
+                LCD_HomeCursor();
+                LCD_printf("DC Motors: Stop");
+                DCMotor_Stop();  // Stop the DC motors
+                break;
+            }
+            // Move DC Motors backward (robot moves backward)
+            case 'C': {
+                LCD_Clear();
+                LCD_HomeCursor();
+                LCD_printf("DC Motors: Backward");
+                DCMotor_Backward(100);  // Move backward at 100% speed
+                break;
+            }
+
+            // ** Stepper Motor Controls **
+            // Full step clockwise
+            case '1': {
+                LCD_Clear();
+                LCD_HomeCursor();
+                LCD_printf("Stepper: CW Full Step");
+                Stepper_Step(1);  // Move stepper motor clockwise with a full step
+                break;
+            }
+            // Full step counterclockwise
+            case '2': {
+                LCD_Clear();
+                LCD_HomeCursor();
+                LCD_printf("Stepper: CCW Full Step");
+                Stepper_Step(2);  // Move stepper motor counterclockwise with a full step
+                break;
+            }
+            // Half step clockwise
+            case '3': {
+                LCD_Clear();
+                LCD_HomeCursor();
+                LCD_printf("Stepper: CW Half Step");
+                Stepper_Step(3);  // Move stepper motor clockwise with a half step
+                break;
+            }
+            // Half step counterclockwise
+            case '4': {
+                LCD_Clear();
+                LCD_HomeCursor();
+                LCD_printf("Stepper: CCW Half Step");
+                Stepper_Step(4);  // Move stepper motor counterclockwise with a half step
+                break;
+            }
+            // Stepper motor off
+            case '0': {
+                LCD_Clear();
+                LCD_HomeCursor();
+                LCD_printf("Stepper: Off");
+                Stepper_Step(0);  // Stop the stepper motor
+                break;
+            }
+
+            // ** RC Servo Controls **
+            // Decrease servo angle (tilt down)
+            case '7': {
+                LCD_Clear();
+                LCD_HomeCursor();
+                LCD_printf("Servo: Decrease Angle");
+                RCServoAngle -= 5;
+                RCServo_SetAngle(RCServoAngle);  // Decrease the servo angle (tilt down)
+                break;
+            }
+            // Increase servo angle (tilt up)
+            case '9': {
+                LCD_Clear();
+                LCD_HomeCursor();
+                LCD_printf("Servo: Increase Angle");
+                RCServoAngle += 5;
+                RCServo_SetAngle(RCServoAngle);  // Increase the servo angle (tilt up)
+                break;
+            }
+            // Center servo
+            case '8': {
+                LCD_Clear();
+                LCD_HomeCursor();
+                LCD_printf("Servo: Center");
+                RCServoAngle = 0;
+                RCServo_SetAngle(RCServoAngle);  // Center the servo
+                break;
+            }
+
+            // ** LED Control **
+            // Toggle LED (optional)
+            case '*': {
+                LCD_Clear();
+                LCD_HomeCursor();
+                LCD_printf("LED: Toggle");
+                LED_Toggle();  // Toggle LED state
+                break;
+            }
+        }
+    }
+}
